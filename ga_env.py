@@ -375,5 +375,6 @@ def main():
         em.step(torch.tensor([random.randrange(em.num_actions())], device=curr_device))
     print(f'Best fitness: {em.get_reward()}')
 
+
 if __name__ == '__main__':
     main()
