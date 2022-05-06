@@ -12,7 +12,7 @@ from deap import benchmarks
 from deap import tools
 from deap import algorithms
 
-IND_SIZE = 10
+IND_SIZE = 3
 LOW_BOUND = -5.12
 UP_BOUND = 5.12
 FITNESS_FUNCTION = benchmarks.rastrigin
@@ -32,15 +32,15 @@ np.random.seed(
     RANDOM_SEED
     )
 
-actions_sel = [
+ACTIONS_SEL = [
     {'function': tools.selTournament, 'tournsize': TOURNAMENT_SIZE},
 ]
 
-actions_cx = [
+ACTIONS_CX = [
     {'function': tools.cxBlend, 'alpha': UP_BOUND},
 ]
 
-actions_mu = [
+ACTIONS_MU = [
     {'function': tools.mutGaussian, 'mu': 0, 'sigma': 1, 'indpb': INDIVIDUAL_MUTATION_RATE},
 ]
 
@@ -78,6 +78,14 @@ class GeneticAlgorithmEnv:
         self.actions_cx = actions_cx
         self.actions_mu = actions_mu
 
+        # Possible actions - all combinations of selection, crossover and mutation operators
+        self.actions = [(s_idx, c_idx, m_idx) for s_idx in range(len(self.actions_sel)) for c_idx in range(len(
+            self.actions_cx))
+                        for
+                        m_idx
+                        in
+                        range(len(self.actions_mu))]
+
         # Episodic variables - these persist only during the episode
         self.current_generation = 0
         self.evals_left = self.max_evals
@@ -89,6 +97,15 @@ class GeneticAlgorithmEnv:
 
         # Reset episodic variables
         self.reset()
+
+    def take_action(self, action: torch.Tensor):
+        """
+        :param action: Tensor with a single value - index of chosen action
+        :return:
+        """
+        self.register_operators(
+            *(self.actions[action.item()])
+        )
 
     def register_operators(
             self,
@@ -125,14 +142,10 @@ class GeneticAlgorithmEnv:
 
     def step(
             self,
-            action: ActType
-            ) -> Tuple[ObsType, float, bool, dict]:
+            action: torch.Tensor
+    ) -> Tuple[ObsType, float, bool, dict]:
         # Perform chosen action
-        self.register_operators(
-            action[0],
-            action[1],
-            action[2]
-            )
+        self.take_action(action)
 
         # Evaluate
         fits = map(
@@ -339,3 +352,28 @@ class GeneticAlgorithmEnv:
                 self.current_state,
                 device=device
                 ).float()
+
+    def num_actions(self):
+        return len(self.actions)
+
+
+def main():
+    curr_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    em = GeneticAlgorithmEnv(
+        num_dims=IND_SIZE,
+        low_bound=LOW_BOUND,
+        up_bound=UP_BOUND,
+        fitness_fn=benchmarks.rastrigin,
+        max_evals=MAX_EVALS,
+        initial_population_size=INITIAL_POPULATION_SIZE,
+        actions_sel=ACTIONS_SEL,
+        actions_cx=ACTIONS_CX,
+        actions_mu=ACTIONS_MU,
+    )
+
+    while not em.done:
+        em.step(torch.tensor([random.randrange(em.num_actions())], device=curr_device))
+    print(f'Best fitness: {em.get_reward()}')
+
+if __name__ == '__main__':
+    main()
