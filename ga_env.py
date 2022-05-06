@@ -64,7 +64,23 @@ class GeneticAlgorithmEnv:
             actions_sel: list,
             actions_cx: list,
             actions_mu: list,
+            device,
     ):
+        """
+
+        :param num_dims:
+        :param low_bound:
+        :param up_bound:
+        :param fitness_fn:
+        :param max_evals:
+        :param initial_population_size:
+        :param actions_sel:
+        :param actions_cx:
+        :param actions_mu:
+        :param device: Pytorch device
+        """
+        self.device = device
+
         # Problem data
         self.num_dims = num_dims
         self.low_bound = low_bound
@@ -92,9 +108,6 @@ class GeneticAlgorithmEnv:
         self.population = None
         self.done: bool = False
 
-        # Observation space - obviously episodic
-        self.current_state = None
-
         # Reset episodic variables
         self.reset()
 
@@ -103,9 +116,8 @@ class GeneticAlgorithmEnv:
         :param action: Tensor with a single value - index of chosen action
         :return:
         """
-        self.register_operators(
-            *(self.actions[action.item()])
-        )
+        self.current_state, reward, self.done, _ = self.step(action.item())
+        return torch.tensor([reward])
 
     def register_operators(
             self,
@@ -142,10 +154,12 @@ class GeneticAlgorithmEnv:
 
     def step(
             self,
-            action: torch.Tensor
+            action_idx: int,
     ) -> Tuple[ObsType, float, bool, dict]:
         # Perform chosen action
-        self.take_action(action)
+        self.register_operators(
+            *(self.actions[action_idx])
+        )
 
         # Evaluate
         fits = map(
@@ -186,7 +200,7 @@ class GeneticAlgorithmEnv:
             n=self.initial_population_size
             )
 
-        self.current_state = None
+        self.current_state = {k: 0 for k in self.logbook.header}
 
     def log_stats(
             self
@@ -336,25 +350,25 @@ class GeneticAlgorithmEnv:
         self.logbook = tools.Logbook()
         self.logbook.header = "gen", "evals", "avg", "std", "min", "max"
 
-    def get_state_tensor(
-            self,
-            device
-            ) -> torch.Tensor:
+    def get_state(self) -> torch.Tensor:
         if self.done:
             return torch.zeros_like(
                 torch.tensor(
-                    self.current_state
+                    [0 for k in self.logbook.header]
                     ),
-                device=device
-                ).float()
+                device=self.device
+                ).double()
         else:
             return torch.tensor(
-                self.current_state,
-                device=device
-                ).float()
+                [self.current_state[k] for k in self.logbook.header],
+                device=self.device
+                ).double()
 
-    def num_actions(self):
+    def num_actions_available(self):
         return len(self.actions)
+
+    def get_num_state_features(self):
+        return len(self.logbook.header)
 
 
 def main():
@@ -369,10 +383,11 @@ def main():
         actions_sel=ACTIONS_SEL,
         actions_cx=ACTIONS_CX,
         actions_mu=ACTIONS_MU,
+        device=curr_device,
     )
 
     while not em.done:
-        em.step(torch.tensor([random.randrange(em.num_actions())], device=curr_device))
+        em.step(random.randrange(em.num_actions_available()))
     print(f'Best fitness: {em.get_reward()}')
 
 
