@@ -4,7 +4,6 @@ from sklearn.cluster import OPTICS
 
 def number_of_clusters_diversity(population: list) -> int:
     population_array = np.array(population)
-
     clustering = OPTICS(min_cluster_size=2).fit(population_array)
 
     return len(set(clustering.labels_))

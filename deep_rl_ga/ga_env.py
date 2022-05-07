@@ -21,10 +21,15 @@ from deep_rl_ga.diversity import (
     gene_mean_unique_ratio_diversity,
 )
 
+
+'''
+from deap.benchmarks import rosenbrock, rastrigin, griewank, ackley, dent, bohachevsky, dtlz1, dtlz2, dtlz3, zdt1, \
+    zdt6, dtlz7, schaffer, schwefel, kursawe, fonseca, schaffer_mo
+'''
 IND_SIZE = 3
-LOW_BOUND = -5.12
-UP_BOUND = 5.12
-FITNESS_FUNCTION = benchmarks.rastrigin
+LOW_BOUND = -1
+UP_BOUND = 1
+FITNESS_FUNCTION = benchmarks.ackley
 
 MATING_RATE = 0.3
 INDIVIDUAL_MUTATION_RATE = 0.3
@@ -110,6 +115,9 @@ class GeneticAlgorithmEnv:
                         m_idx
                         in
                         range(len(self.actions_mu))]
+        # TODO created
+        print(self.actions)
+        # TODO created
 
         # Episodic variables - these persist only during the episode
         self.current_generation = 0
@@ -166,7 +174,7 @@ class GeneticAlgorithmEnv:
     def step(
             self,
             action_idx: int,
-    ) -> Tuple[ObsType, float, bool, dict]:
+    ) -> tuple[dict, float, bool, None]:
         # Perform chosen action
         self.register_operators(
             *(self.actions[action_idx])
