@@ -1,3 +1,4 @@
+import copy
 from typing import (
     Tuple,
     TypeVar,
@@ -11,6 +12,14 @@ from deap import creator
 from deap import benchmarks
 from deap import tools
 from deap import algorithms
+
+from deep_rl_ga.diversity import (
+    fitness_max_mean_ratio_diversity,
+    fitness_mean_min_ratio_diversity,
+    number_of_clusters_diversity,
+    gene_mean_std_diversity,
+    gene_mean_unique_ratio_diversity,
+)
 
 IND_SIZE = 3
 LOW_BOUND = -5.12
@@ -105,6 +114,8 @@ class GeneticAlgorithmEnv:
         # Episodic variables - these persist only during the episode
         self.current_generation = 0
         self.evals_left = self.max_evals
+        self.prev_population = None
+        self.prev_fitness = None
         self.population = None
         self.done: bool = False
 
@@ -176,6 +187,8 @@ class GeneticAlgorithmEnv:
             )
 
         # Log data
+        self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
+        self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
         current_record = self.log_stats()
         self.current_state = current_record
 
@@ -258,11 +271,11 @@ class GeneticAlgorithmEnv:
             self
             ) -> float:
         """
-        Return the reward form current state
+        Return the reward from current state
 
         :return:
         """
-        return self.hof[0].fitness.values[0]
+        return 1 / self.hof[0].fitness.values[0]
 
     def _setup_problem(
             self
@@ -321,34 +334,25 @@ class GeneticAlgorithmEnv:
             maxsize=1,
             similar=lambda
                 a,
-                b: all(
+                b: np.all(
                 a == b
                 )
             )
-
-        self.stats = tools.Statistics(
-            lambda
-                ind: ind.fitness.values
-            )
-        self.stats.register(
-            "avg",
-            np.mean
-            )
-        self.stats.register(
-            "std",
-            np.std
-            )
-        self.stats.register(
-            "min",
-            np.min
-            )
-        self.stats.register(
-            "max",
-            np.max
-            )
+        self.stats = tools.Statistics()
+        self.stats.register("max_fitness", lambda pop: np.max([ind.fitness.values[0] for ind in pop]))
+        self.stats.register("min_fitness", lambda pop: np.min([ind.fitness.values[0] for ind in pop]))
+        self.stats.register("fitness_std_range_diversity", lambda pop: np.std([ind.fitness.values[0] for ind in pop]))
+        self.stats.register("number_of_clusters_diversity", number_of_clusters_diversity)
+        self.stats.register("fitness_max_mean_ratio_diversity", fitness_max_mean_ratio_diversity)
+        self.stats.register("fitness_mean_min_ratio_diversity", fitness_mean_min_ratio_diversity)
+        self.stats.register("gene_mean_std_diversity", gene_mean_std_diversity)
+        self.stats.register("gene_mean_unique_ratio_diversity", gene_mean_unique_ratio_diversity)
 
         self.logbook = tools.Logbook()
-        self.logbook.header = "gen", "evals", "avg", "std", "min", "max"
+        self.logbook.header = "gen", "evals", \
+                              "number_of_clusters_diversity", \
+                              "fitness_max_mean_ratio_diversity", "fitness_mean_min_ratio_diversity", \
+                              "gene_mean_std_diversity", "gene_mean_unique_ratio_diversity"
 
     def get_state(self) -> torch.Tensor:
         if self.done:
