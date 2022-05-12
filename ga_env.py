@@ -1,5 +1,8 @@
 import copy
 from typing import (
+    Callable,
+    Dict,
+    List,
     Tuple,
     TypeVar,
 )
@@ -19,6 +22,7 @@ from deep_rl_ga.diversity import (
     number_of_clusters_diversity,
     gene_mean_std_diversity,
     gene_mean_unique_ratio_diversity,
+    clusters_of,
 )
 
 IND_SIZE = 3
@@ -53,6 +57,34 @@ ACTIONS_MU = [
     {'function': tools.mutGaussian, 'mu': 0, 'sigma': 1, 'indpb': INDIVIDUAL_MUTATION_RATE},
 ]
 
+STAT_FUNCTIONS = [
+    ("max_fitness", lambda
+        pop: np.max(
+        [ind.fitness.values[0] for ind in pop]
+        )),
+    ("min_fitness", lambda
+        pop: np.min(
+        [ind.fitness.values[0] for ind in pop]
+        )),
+    ("fitness_std_range_diversity", lambda
+        pop: np.std(
+        [ind.fitness.values[0] for ind in pop]
+        )),
+    ("number_of_clusters_diversity", number_of_clusters_diversity),
+    ("clusters_of_fitness_max_mean_ratio_diversity", clusters_of(
+        fitness_max_mean_ratio_diversity
+    )),
+    ("clusters_of_fitness_mean_min_ratio_diversity", clusters_of(
+        fitness_mean_min_ratio_diversity
+    )),
+    ("clusters_of_gene_mean_std_diversity", clusters_of(
+        gene_mean_std_diversity
+    )),
+    ("clusters_of_gene_mean_unique_ratio_diversity", clusters_of(
+        gene_mean_unique_ratio_diversity
+    )),
+]
+
 ObsType = TypeVar(
     'ObsType'
     )
@@ -67,13 +99,14 @@ class GeneticAlgorithmEnv:
             num_dims: int,
             low_bound: float,
             up_bound: float,
-            fitness_fn,
+            fitness_fn: Callable,
             max_evals: int,
             initial_population_size: int,
-            actions_sel: list,
-            actions_cx: list,
-            actions_mu: list,
-            device,
+            actions_sel: List[Dict],
+            actions_cx: List[Dict],
+            actions_mu: List[Dict],
+            stat_functions: List[Tuple[str, Callable]],
+            device: torch.device,
     ):
         """
 
@@ -120,7 +153,7 @@ class GeneticAlgorithmEnv:
         self.done: bool = False
 
         # Reset episodic variables
-        self.reset()
+        self.reset(stat_functions=stat_functions)
 
     def take_action(self, action: torch.Tensor):
         """
@@ -202,10 +235,11 @@ class GeneticAlgorithmEnv:
         return self.current_state, self.get_reward(), self.done, None
 
     def reset(
-            self
+            self,
+            stat_functions: List[Tuple[str, Callable]]
             ):
         self._setup_problem()
-        self._setup_stats()
+        self._setup_stats(stat_functions=stat_functions)
 
         self.current_generation = 0
         self.evals_left = self.max_evals
@@ -328,7 +362,8 @@ class GeneticAlgorithmEnv:
             )
 
     def _setup_stats(
-            self
+            self,
+            stat_functions: List[Tuple[str, Callable]] = None,
             ):
         self.hof = tools.HallOfFame(
             maxsize=1,
@@ -338,21 +373,15 @@ class GeneticAlgorithmEnv:
                 a == b
                 )
             )
-        self.stats = tools.Statistics()
-        self.stats.register("max_fitness", lambda pop: np.max([ind.fitness.values[0] for ind in pop]))
-        self.stats.register("min_fitness", lambda pop: np.min([ind.fitness.values[0] for ind in pop]))
-        self.stats.register("fitness_std_range_diversity", lambda pop: np.std([ind.fitness.values[0] for ind in pop]))
-        self.stats.register("number_of_clusters_diversity", number_of_clusters_diversity)
-        self.stats.register("fitness_max_mean_ratio_diversity", fitness_max_mean_ratio_diversity)
-        self.stats.register("fitness_mean_min_ratio_diversity", fitness_mean_min_ratio_diversity)
-        self.stats.register("gene_mean_std_diversity", gene_mean_std_diversity)
-        self.stats.register("gene_mean_unique_ratio_diversity", gene_mean_unique_ratio_diversity)
 
+        self.stats = tools.Statistics()
         self.logbook = tools.Logbook()
-        self.logbook.header = "gen", "evals", \
-                              "number_of_clusters_diversity", \
-                              "fitness_max_mean_ratio_diversity", "fitness_mean_min_ratio_diversity", \
-                              "gene_mean_std_diversity", "gene_mean_unique_ratio_diversity"
+        self.logbook.header = "gen", "evals"
+
+        if stat_functions:
+            for name, fn in stat_functions:
+                self.stats.register(name, fn)
+                self.logbook.header = *self.logbook.header, name
 
     def get_state(self) -> torch.Tensor:
         if self.done:
@@ -387,11 +416,13 @@ def main():
         actions_sel=ACTIONS_SEL,
         actions_cx=ACTIONS_CX,
         actions_mu=ACTIONS_MU,
+        stat_functions=STAT_FUNCTIONS,
         device=curr_device,
     )
 
     while not em.done:
         em.step(random.randrange(em.num_actions_available()))
+    print(em.logbook[0]["clusters_of_fitness_max_mean_ratio_diversity"])
     print(f'Best fitness: {em.get_reward()}')
 
 
