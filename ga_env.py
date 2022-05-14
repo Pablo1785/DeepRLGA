@@ -1,4 +1,5 @@
 import copy
+import time
 from typing import (
     Callable,
     Dict,
@@ -17,6 +18,7 @@ from deap import tools
 from deap import algorithms
 
 from deep_rl_ga.diversity import (
+    Clusterer,
     fitness_max_mean_ratio_diversity,
     fitness_mean_min_ratio_diversity,
     number_of_clusters_diversity,
@@ -28,7 +30,7 @@ from deep_rl_ga.diversity import (
 IND_SIZE = 3
 LOW_BOUND = -5.12
 UP_BOUND = 5.12
-FITNESS_FUNCTION = benchmarks.rastrigin
+FITNESS_FUNCTION = benchmarks.ackley
 
 MATING_RATE = 0.3
 INDIVIDUAL_MUTATION_RATE = 0.3
@@ -57,6 +59,10 @@ ACTIONS_MU = [
     {'function': tools.mutGaussian, 'mu': 0, 'sigma': 1, 'indpb': INDIVIDUAL_MUTATION_RATE},
 ]
 
+CLUSTERER = Clusterer()
+
+N_CLUSTERS = 10
+
 STAT_FUNCTIONS = [
     ("max_fitness", lambda
         pop: np.max(
@@ -71,18 +77,24 @@ STAT_FUNCTIONS = [
         [ind.fitness.values[0] for ind in pop]
         )),
     ("number_of_clusters_diversity", number_of_clusters_diversity),
-    ("clusters_of_fitness_max_mean_ratio_diversity", clusters_of(
-        fitness_max_mean_ratio_diversity
-    )),
-    ("clusters_of_fitness_mean_min_ratio_diversity", clusters_of(
-        fitness_mean_min_ratio_diversity
-    )),
-    ("clusters_of_gene_mean_std_diversity", clusters_of(
-        gene_mean_std_diversity
-    )),
-    ("clusters_of_gene_mean_unique_ratio_diversity", clusters_of(
-        gene_mean_unique_ratio_diversity
-    )),
+    # ("clusters_of_fitness_max_mean_ratio_diversity", CLUSTERER.clusters_of(
+    #     fitness_max_mean_ratio_diversity
+    # )),
+    # ("clusters_of_fitness_mean_min_ratio_diversity", CLUSTERER.clusters_of(
+    #     fitness_mean_min_ratio_diversity
+    # )),
+    # ("clusters_of_gene_mean_std_diversity", CLUSTERER.clusters_of(
+    #     gene_mean_std_diversity
+    # )),
+    # ("clusters_of_gene_mean_unique_ratio_diversity", CLUSTERER.clusters_of(
+    #     gene_mean_unique_ratio_diversity
+    # )),
+    ("clusters_of_multiple_fns", CLUSTERER.clusters_of_fns([
+        fitness_max_mean_ratio_diversity,
+        fitness_mean_min_ratio_diversity,
+        gene_mean_std_diversity,
+        gene_mean_unique_ratio_diversity,
+    ], n_clusters=N_CLUSTERS, random_seed=RANDOM_SEED)),
 ]
 
 ObsType = TypeVar(
@@ -106,6 +118,7 @@ class GeneticAlgorithmEnv:
             actions_cx: List[Dict],
             actions_mu: List[Dict],
             stat_functions: List[Tuple[str, Callable]],
+            clusterer: Clusterer,
             device: torch.device,
     ):
         """
@@ -152,8 +165,12 @@ class GeneticAlgorithmEnv:
         self.population = None
         self.done: bool = False
 
+        # Stats
+        self.stat_functions = stat_functions
+        self.clusterer = clusterer
+
         # Reset episodic variables
-        self.reset(stat_functions=stat_functions)
+        self.reset()
 
     def take_action(self, action: torch.Tensor):
         """
@@ -222,7 +239,8 @@ class GeneticAlgorithmEnv:
         # Log data
         self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
         self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
-        current_record = self.log_stats()
+
+        current_record = self.log_stats()  # performance bottleneck, takes 100% of time for a single NN training step
         self.current_state = current_record
 
         # Check if evolution is finished
@@ -234,12 +252,9 @@ class GeneticAlgorithmEnv:
 
         return self.current_state, self.get_reward(), self.done, None
 
-    def reset(
-            self,
-            stat_functions: List[Tuple[str, Callable]]
-            ):
+    def reset(self):
         self._setup_problem()
-        self._setup_stats(stat_functions=stat_functions)
+        self._setup_stats()
 
         self.current_generation = 0
         self.evals_left = self.max_evals
@@ -267,7 +282,8 @@ class GeneticAlgorithmEnv:
         # Record data
         record = self.stats.compile(
             self.population
-            )
+            )  # performance bottleneck, takes around 80-90% of time for a single NN training step
+
         self.logbook.record(
             gen=self.current_generation,
             evals=len(
@@ -317,7 +333,7 @@ class GeneticAlgorithmEnv:
         """
         Initialize the current optimization problem
 
-        :param num_dims: Dimensionality of the problme
+        :param num_dims: Dimensionality of the problem
         :param low_bound:
         :param up_bound:
         :param fitness_fn: Function that evaluates the quality of possible solutions
@@ -361,10 +377,7 @@ class GeneticAlgorithmEnv:
             self.fitness_fn
             )
 
-    def _setup_stats(
-            self,
-            stat_functions: List[Tuple[str, Callable]] = None,
-            ):
+    def _setup_stats(self):
         self.hof = tools.HallOfFame(
             maxsize=1,
             similar=lambda
@@ -378,22 +391,34 @@ class GeneticAlgorithmEnv:
         self.logbook = tools.Logbook()
         self.logbook.header = "gen", "evals"
 
-        if stat_functions:
-            for name, fn in stat_functions:
+        if self.stat_functions:
+            for name, fn in self.stat_functions:
                 self.stats.register(name, fn)
                 self.logbook.header = *self.logbook.header, name
+
+        if self.clusterer:
+            self.clusterer.reset()
 
     def get_state(self) -> torch.Tensor:
         if self.done:
             return torch.zeros_like(
                 torch.tensor(
-                    [0 for k in self.logbook.header]
+                    [0] * self.get_num_state_features()
                     ),
                 device=self.device
                 ).double()
         else:
+            data = []
+            for k in self.logbook.header:
+                if isinstance(self.current_state[k], np.ndarray):
+                    data += list(self.current_state[k].flatten())
+                else:
+                    data.append(self.current_state[k])
+            # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
+            if len(data) < self.get_num_state_features():
+                data += [0] * (self.get_num_state_features() - len(data))
             return torch.tensor(
-                [self.current_state[k] for k in self.logbook.header],
+                data,
                 device=self.device
                 ).double()
 
@@ -401,7 +426,7 @@ class GeneticAlgorithmEnv:
         return len(self.actions)
 
     def get_num_state_features(self):
-        return len(self.logbook.header)
+        return len(self.logbook.header) - 1 + len(self.clusterer.fns) * self.clusterer.n_clusters
 
 
 def main():
@@ -410,20 +435,21 @@ def main():
         num_dims=IND_SIZE,
         low_bound=LOW_BOUND,
         up_bound=UP_BOUND,
-        fitness_fn=benchmarks.rastrigin,
+        fitness_fn=FITNESS_FUNCTION,
         max_evals=MAX_EVALS,
         initial_population_size=INITIAL_POPULATION_SIZE,
         actions_sel=ACTIONS_SEL,
         actions_cx=ACTIONS_CX,
         actions_mu=ACTIONS_MU,
         stat_functions=STAT_FUNCTIONS,
+        clusterer=CLUSTERER,
         device=curr_device,
     )
 
     while not em.done:
         em.step(random.randrange(em.num_actions_available()))
-    print(em.logbook[0]["clusters_of_fitness_max_mean_ratio_diversity"])
-    print(f'Best fitness: {em.get_reward()}')
+        st = em.get_state()
+    print(f'Best fitness: {1 / em.get_reward()}')
 
 
 if __name__ == '__main__':
