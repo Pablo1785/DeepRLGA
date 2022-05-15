@@ -64,19 +64,19 @@ CLUSTERER = Clusterer()
 N_CLUSTERS = 10
 
 STAT_FUNCTIONS = [
-    ("max_fitness", lambda
-        pop: np.max(
-        [ind.fitness.values[0] for ind in pop]
-        )),
-    ("min_fitness", lambda
-        pop: np.min(
-        [ind.fitness.values[0] for ind in pop]
-        )),
-    ("fitness_std_range_diversity", lambda
-        pop: np.std(
-        [ind.fitness.values[0] for ind in pop]
-        )),
-    ("number_of_clusters_diversity", number_of_clusters_diversity),
+    # ("max_fitness", lambda
+    #     pop: np.max(
+    #     [ind.fitness.values[0] for ind in pop]
+    #     )),
+    # ("min_fitness", lambda
+    #     pop: np.min(
+    #     [ind.fitness.values[0] for ind in pop]
+    #     )),
+    # ("fitness_std_range_diversity", lambda
+    #     pop: np.std(
+    #     [ind.fitness.values[0] for ind in pop]
+    #     )),
+    # ("number_of_clusters_diversity", number_of_clusters_diversity),
     # ("clusters_of_fitness_max_mean_ratio_diversity", CLUSTERER.clusters_of(
     #     fitness_max_mean_ratio_diversity
     # )),
@@ -94,6 +94,7 @@ STAT_FUNCTIONS = [
         fitness_mean_min_ratio_diversity,
         gene_mean_std_diversity,
         gene_mean_unique_ratio_diversity,
+        lambda p: len(p) / INITIAL_POPULATION_SIZE,  # Cluster population size as part of initial population size
     ], n_clusters=N_CLUSTERS, random_seed=RANDOM_SEED)),
 ]
 
@@ -389,7 +390,10 @@ class GeneticAlgorithmEnv:
 
         self.stats = tools.Statistics()
         self.logbook = tools.Logbook()
-        self.logbook.header = "gen", "evals"
+        self.logbook.header = "gen", "evals", "used_part_of_evals", "left_part_of_evals"
+
+        self.stats.register("used_part_of_evals", lambda _: min(1., 1 - self.evals_left / self.max_evals))
+        self.stats.register("left_part_of_evals", lambda _: max(0., self.evals_left / self.max_evals))
 
         if self.stat_functions:
             for name, fn in self.stat_functions:
@@ -449,6 +453,7 @@ def main():
     while not em.done:
         em.step(random.randrange(em.num_actions_available()))
         st = em.get_state()
+        print(em.logbook.stream)
     print(f'Best fitness: {1 / em.get_reward()}')
 
 
