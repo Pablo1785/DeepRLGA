@@ -188,19 +188,19 @@ class Clusterer:
                 new_labels = np.copy(labels)
                 for c1, c2 in enumerate(cluster_mappings):
                     new_labels[labels == c2] = c1
+                    clusterer.prev_cluster_centers[c2] = model.cluster_centers_[c1]
                 labels = new_labels
-
-            # Save current cluster centers for later
-            clusterer.prev_cluster_centers = model.cluster_centers_
+            else:
+                # Save current cluster centers for later
+                clusterer.prev_cluster_centers = model.cluster_centers_
 
             cluster_vals = []
             for i in range(
                     n_clusters
                     ):
                 cluster_population = [ind for ind, label in zip(population, labels) if label == i]
-                cluster_vals.append(
-                    tuple(fn(cluster_population) for fn in fns)
-                    )
+
+                cluster_vals.append(tuple(fn(cluster_population) for fn in fns))
             return np.array(
                 cluster_vals
                 )

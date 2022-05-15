@@ -430,7 +430,8 @@ class GeneticAlgorithmEnv:
         return len(self.actions)
 
     def get_num_state_features(self):
-        return len(self.logbook.header) - 1 + len(self.clusterer.fns) * self.clusterer.n_clusters
+        return len(self.logbook.header) - 1 + len(self.clusterer.fns) * self.clusterer.n_clusters  # Clusterer
+        # fns + 1 because for each cluster we also calculate its distance from the center of search space
 
 
 def main():
