@@ -121,6 +121,7 @@ class GeneticAlgorithmEnv:
             stat_functions: List[Tuple[str, Callable]],
             clusterer: Clusterer,
             device: torch.device,
+            number_of_stacked_states: int = 1,
     ):
         """
 
@@ -169,6 +170,7 @@ class GeneticAlgorithmEnv:
         # Stats
         self.stat_functions = stat_functions
         self.clusterer = clusterer
+        self.number_of_stacked_states = number_of_stacked_states
 
         # Reset episodic variables
         self.reset()
@@ -178,7 +180,7 @@ class GeneticAlgorithmEnv:
         :param action: Tensor with a single value - index of chosen action
         :return:
         """
-        self.current_state, reward, self.done, _ = self.step(action.item())
+        self.current_state, reward, self.done, self.n_last_states = self.step(action.item())
         return torch.tensor([reward])
 
     def register_operators(
@@ -241,8 +243,12 @@ class GeneticAlgorithmEnv:
         self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
         self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
 
+
         current_record = self.log_stats()  # performance bottleneck, takes 100% of time for a single NN training step
         self.current_state = current_record
+
+        self.n_last_states.pop(0)
+        self.n_last_states.append(copy.deepcopy(self.current_state))
 
         # Check if evolution is finished
         self.done = self.evals_left <= 0
@@ -251,7 +257,7 @@ class GeneticAlgorithmEnv:
         if not self.done:
             self.evolve()
 
-        return self.current_state, self.get_reward(), self.done, None
+        return self.current_state, self.get_reward(), self.done, self.n_last_states
 
     def reset(self):
         self._setup_problem()
@@ -264,6 +270,10 @@ class GeneticAlgorithmEnv:
             )
 
         self.current_state = {k: 0 for k in self.logbook.header}
+        self.n_last_states: List[Dict] = [
+            {k: 0 for k in self.logbook.header} for _ in range(self.number_of_stacked_states)
+        ]
+
 
     def log_stats(
             self
@@ -413,11 +423,12 @@ class GeneticAlgorithmEnv:
                 ).double()
         else:
             data = []
-            for k in self.logbook.header:
-                if isinstance(self.current_state[k], np.ndarray):
-                    data += list(self.current_state[k].flatten())
-                else:
-                    data.append(self.current_state[k])
+            for i in reversed(range(self.number_of_stacked_states)):
+                for k in self.logbook.header:
+                    if isinstance(self.n_last_states[i][k], np.ndarray):
+                        data += list(self.n_last_states[i][k].flatten())
+                    else:
+                        data.append(self.n_last_states[i][k])
             # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
             if len(data) < self.get_num_state_features():
                 data += [0] * (self.get_num_state_features() - len(data))
@@ -430,7 +441,8 @@ class GeneticAlgorithmEnv:
         return len(self.actions)
 
     def get_num_state_features(self):
-        return len(self.logbook.header) - 1 + len(self.clusterer.fns) * self.clusterer.n_clusters  # Clusterer
+        return self.number_of_stacked_states * (len(self.logbook.header) - 1 + len(self.clusterer.fns) *
+                                              self.clusterer.n_clusters)  # Clusterer
         # fns + 1 because for each cluster we also calculate its distance from the center of search space
 
 
@@ -449,12 +461,13 @@ def main():
         stat_functions=STAT_FUNCTIONS,
         clusterer=CLUSTERER,
         device=curr_device,
+        number_of_stacked_states=4,
     )
 
     while not em.done:
         em.step(random.randrange(em.num_actions_available()))
         st = em.get_state()
-        print(em.logbook.stream)
+        print(f'\nSTATE: {st}')
     print(f'Best fitness: {1 / em.get_reward()}')
 
 
