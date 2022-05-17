@@ -7,7 +7,21 @@ class DQN(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(in_features=num_state_features, out_features=128),
+            nn.Linear(in_features=num_state_features, out_features=512),
+            nn.ReLU(),
+            nn.Linear(512, 360),
+            nn.ReLU(),
+            nn.Linear(360, 256),
+            nn.ReLU(),
+            nn.Linear(256, 168),
+            nn.ReLU(),
+            nn.Linear(168, 128),
+            nn.ReLU(),
+            nn.Linear(128, 92),
+            nn.ReLU(),
+            nn.Linear(92, 168),
+            nn.ReLU(),
+            nn.Linear(168, 128),
             nn.ReLU(),
             nn.Linear(128, 92),
             nn.ReLU(),
@@ -15,9 +29,9 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 86),
             nn.ReLU(),
-            nn.Linear(86, 92),
+            nn.Linear(86, 156),
             nn.ReLU(),
-            nn.Linear(92, 64),
+            nn.Linear(156, 64),
             nn.ReLU(),
             nn.Linear(64, 92),
             nn.ReLU(),
@@ -37,9 +51,9 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.Linear(42, 64),
             nn.ReLU(),
-            nn.Linear(64, 32),
+            nn.Linear(64, 72),
             nn.ReLU(),
-            nn.Linear(in_features=32, out_features=num_outputs),
+            nn.Linear(in_features=72, out_features=num_outputs),
         )
         self.double()
 

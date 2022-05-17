@@ -24,7 +24,6 @@ from deep_rl_ga.diversity import (
     number_of_clusters_diversity,
     gene_mean_std_diversity,
     gene_mean_unique_ratio_diversity,
-    clusters_of,
 )
 
 IND_SIZE = 3
@@ -64,31 +63,6 @@ CLUSTERER = Clusterer()
 N_CLUSTERS = 10
 
 STAT_FUNCTIONS = [
-    # ("max_fitness", lambda
-    #     pop: np.max(
-    #     [ind.fitness.values[0] for ind in pop]
-    #     )),
-    # ("min_fitness", lambda
-    #     pop: np.min(
-    #     [ind.fitness.values[0] for ind in pop]
-    #     )),
-    # ("fitness_std_range_diversity", lambda
-    #     pop: np.std(
-    #     [ind.fitness.values[0] for ind in pop]
-    #     )),
-    # ("number_of_clusters_diversity", number_of_clusters_diversity),
-    # ("clusters_of_fitness_max_mean_ratio_diversity", CLUSTERER.clusters_of(
-    #     fitness_max_mean_ratio_diversity
-    # )),
-    # ("clusters_of_fitness_mean_min_ratio_diversity", CLUSTERER.clusters_of(
-    #     fitness_mean_min_ratio_diversity
-    # )),
-    # ("clusters_of_gene_mean_std_diversity", CLUSTERER.clusters_of(
-    #     gene_mean_std_diversity
-    # )),
-    # ("clusters_of_gene_mean_unique_ratio_diversity", CLUSTERER.clusters_of(
-    #     gene_mean_unique_ratio_diversity
-    # )),
     ("clusters_of_multiple_fns", CLUSTERER.clusters_of_fns([
         fitness_max_mean_ratio_diversity,
         fitness_mean_min_ratio_diversity,
@@ -164,6 +138,8 @@ class GeneticAlgorithmEnv:
         self.evals_left = self.max_evals
         self.prev_population = None
         self.prev_fitness = None
+        self.prev_best_fitness = None
+        self.curr_best_fitness = None
         self.population = None
         self.done: bool = False
 
@@ -243,9 +219,15 @@ class GeneticAlgorithmEnv:
         self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
         self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
 
+        self.prev_best_fitness = self.curr_best_fitness
+        self.curr_best_fitness = np.min(self.prev_fitness)
 
         current_record = self.log_stats()  # performance bottleneck, takes 100% of time for a single NN training step
-        self.current_state = current_record
+        modified_record = copy.deepcopy(current_record)
+        modified_record.pop('gen')
+        modified_record.pop('evals')  # these numbers are too problem specific, ratio of evals left is a better proxy
+        # for how much time does the network have left
+        self.current_state = modified_record
 
         self.n_last_states.pop(0)
         self.n_last_states.append(copy.deepcopy(self.current_state))
@@ -273,7 +255,6 @@ class GeneticAlgorithmEnv:
         self.n_last_states: List[Dict] = [
             {k: 0 for k in self.logbook.header} for _ in range(self.number_of_stacked_states)
         ]
-
 
     def log_stats(
             self
@@ -336,7 +317,7 @@ class GeneticAlgorithmEnv:
 
         :return:
         """
-        return 1 / self.hof[0].fitness.values[0]
+        return -np.log(self.curr_best_fitness / self.prev_best_fitness)
 
     def _setup_problem(
             self
@@ -397,6 +378,8 @@ class GeneticAlgorithmEnv:
                 a == b
                 )
             )
+        self.prev_best_fitness = np.inf
+        self.curr_best_fitness = np.inf
 
         self.stats = tools.Statistics()
         self.logbook = tools.Logbook()
@@ -425,10 +408,11 @@ class GeneticAlgorithmEnv:
             data = []
             for i in reversed(range(self.number_of_stacked_states)):
                 for k in self.logbook.header:
-                    if isinstance(self.n_last_states[i][k], np.ndarray):
-                        data += list(self.n_last_states[i][k].flatten())
-                    else:
-                        data.append(self.n_last_states[i][k])
+                    if k not in ('gen', 'evals'):
+                        if isinstance(self.n_last_states[i][k], np.ndarray):
+                            data += list(self.n_last_states[i][k].flatten())
+                        else:
+                            data.append(self.n_last_states[i][k])
             # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
             if len(data) < self.get_num_state_features():
                 data += [0] * (self.get_num_state_features() - len(data))
@@ -441,9 +425,12 @@ class GeneticAlgorithmEnv:
         return len(self.actions)
 
     def get_num_state_features(self):
-        return self.number_of_stacked_states * (len(self.logbook.header) - 1 + len(self.clusterer.fns) *
+        if not self.clusterer.fns:
+            return self.number_of_stacked_states * len(self.logbook.header)
+        return self.number_of_stacked_states * (len(self.logbook.header) - 3 + len(self.clusterer.fns) *
                                               self.clusterer.n_clusters)  # Clusterer
         # fns + 1 because for each cluster we also calculate its distance from the center of search space
+        # logbook.header - 2 because gens and evals are dropped, -1 because clustering data is one of the fields
 
 
 def main():

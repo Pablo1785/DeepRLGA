@@ -55,30 +55,6 @@ def gene_mean_unique_ratio_diversity(population: list) -> float:
     return np.mean(gene_unique_ratios)
 
 
-def clusters_of(fn, n_clusters: int = 4, clustering_method=KMeans, random_seed=0, logbook=None):
-    """
-    Calculate fn() for each of n_clusters of individuals in population, and return results as numpy array of size
-    n_clusters.
-
-    :param fn: Function to calculate for each cluster
-    :param population: Population of solutions
-    :param n_clusters: Number of clusters
-    :param clustering_method:
-    :return:
-    """
-    def _clusterized_fn(population: list) -> np.array:
-        population_array = np.array(population)
-
-        model = clustering_method(n_clusters=n_clusters, random_state=random_seed)
-        labels = model.fit_predict(population_array)
-
-        cluster_vals = []
-        for i in range(n_clusters):
-            cluster_vals.append(fn([ind for ind, label in zip(population, labels) if label == i]))
-        return np.array(cluster_vals), model.cluster_centers_
-    return _clusterized_fn
-
-
 def get_cluster_mappings(
         gen1_centroids,
         gen2_centroids
@@ -174,12 +150,12 @@ class Clusterer:
                 )
 
             model = clustering_method(
-                n_clusters=n_clusters,
-                random_state=random_seed
+                n_clusters=clusterer.n_clusters,
+                random_state=random_seed,
                 )
             labels = model.fit_predict(
                 population_array
-                )
+                )  # Performance bottleneck, takes mostof the time of a single generation
 
             # Try to match cluster labels to previous clusters
             if clusterer.prev_cluster_centers_available:
@@ -196,12 +172,25 @@ class Clusterer:
 
             cluster_vals = []
             for i in range(
-                    n_clusters
+                    clusterer.n_clusters
                     ):
                 cluster_population = [ind for ind, label in zip(population, labels) if label == i]
 
-                cluster_vals.append(tuple(fn(cluster_population) for fn in fns))
+                cluster_vals.append(tuple(fn(cluster_population) for fn in clusterer.fns))
             return np.array(
                 cluster_vals
                 )
         return _clusterized_fns
+
+
+def selWorstPossible(population, k: int) -> List:
+    worst_ind = max(population, key=lambda ind: ind.fitness.values[0])
+    return [worst_ind] * k
+
+
+def selBestPossible(population, k: int, top_n=1) -> List:
+    best_inds = sorted(population, key=lambda ind: ind.fitness.values[0])[:top_n]
+    chosen = []
+    while len(chosen) < k:
+        chosen += best_inds
+    return chosen[:k]
