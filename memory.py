@@ -32,9 +32,9 @@ class ReplayMemory:
 def extract_tensors(experiences, device):
     batch = Experience(*zip(*experiences))
 
-    t1 = torch.stack(batch.state).to(device)
-    t2 = torch.cat(batch.action).to(device)
-    t3 = torch.cat(batch.reward).to(device)
-    t4 = torch.stack(batch.next_state).to(device)
+    t1 = torch.nan_to_num(torch.stack(batch.state)).to(device)
+    t2 = torch.nan_to_num(torch.cat(batch.action)).to(device)
+    t3 = torch.nan_to_num(torch.cat(batch.reward)).to(device)
+    t4 = torch.nan_to_num(torch.stack(batch.next_state)).to(device)
 
     return t1, t2, t3, t4

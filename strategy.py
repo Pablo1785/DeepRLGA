@@ -1,3 +1,4 @@
+import json
 import math
 
 
@@ -10,6 +11,15 @@ class EpsilonGreedyStrategy:
     def get_exploration_rate(self, current_step):
         return self.end + (self.start - self.end) * \
             math.exp(-1. * current_step * self.decay)
+
+    def to_json(self):
+        return json.dumps(
+            {
+                'start': self.start,
+                'end': self.end,
+                'decay': self.decay,
+            }
+        )
 
 
 class NoExplorationStrategy:

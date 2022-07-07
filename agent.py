@@ -1,11 +1,19 @@
+import json
 import random
+from typing import Union
+
 import torch
+
+from deep_rl_ga.strategy import (
+    EpsilonGreedyStrategy,
+    NoExplorationStrategy,
+)
 
 
 class Agent:
     def __init__(
         self,
-        strategy,
+        strategy: Union[EpsilonGreedyStrategy, NoExplorationStrategy],
         num_actions: int,
         device,
     ):
@@ -34,4 +42,13 @@ class Agent:
             return torch.tensor([action]).to(self.device)
         else:
             with torch.no_grad():
-                return policy_net(state).unsqueeze(dim=0).argmax(dim=1).to(self.device)  # exploit
+                network_output = policy_net(state)
+                return network_output.unsqueeze(dim=0).argmax(dim=1).to(self.device)  # exploit
+
+    def to_json(self):
+        return json.dumps(
+            {
+                'strategy': None if type(self.strategy) == NoExplorationStrategy else self.strategy.to_json(),
+                'num_actions': self.num_actions,
+            }
+        )

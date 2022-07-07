@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.cluster import (
     KMeans,
     OPTICS,
+    MiniBatchKMeans,
 )
 
 from scipy.spatial import distance_matrix
@@ -124,7 +125,7 @@ class Clusterer:
             self,
             fns: List[Callable],
             n_clusters: int = 4,
-            clustering_method=KMeans,
+            clustering_method=MiniBatchKMeans,
             random_seed=0,
             ):
         """

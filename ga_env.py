@@ -1,9 +1,11 @@
 import copy
+import json
 import time
 from typing import (
     Callable,
     Dict,
     List,
+    Optional,
     Tuple,
     TypeVar,
 )
@@ -31,8 +33,7 @@ LOW_BOUND = -5.12
 UP_BOUND = 5.12
 FITNESS_FUNCTION = benchmarks.ackley
 
-MATING_RATE = 0.3
-INDIVIDUAL_MUTATION_RATE = 0.3
+ATTRIBUTE_MUTATION_RATE = 0.3
 TOURNAMENT_SIZE = 3
 INITIAL_POPULATION_SIZE = 150
 MAX_EVALS = 10_000
@@ -55,8 +56,10 @@ ACTIONS_CX = [
 ]
 
 ACTIONS_MU = [
-    {'function': tools.mutGaussian, 'mu': 0, 'sigma': 1, 'indpb': INDIVIDUAL_MUTATION_RATE},
+    {'function': tools.mutGaussian, 'mu': 0, 'sigma': 1, 'indpb': ATTRIBUTE_MUTATION_RATE},
 ]
+ACTIONS_CXPB = [0.05, 0.1, 0.2, 0.4, 0.8]
+ACTIONS_MUTPB = [0.05, 0.1, 0.2, 0.4, 0.8]
 
 CLUSTERER = Clusterer()
 
@@ -92,10 +95,14 @@ class GeneticAlgorithmEnv:
             actions_sel: List[Dict],
             actions_cx: List[Dict],
             actions_mu: List[Dict],
+            actions_cxpb: List[float],
+            actions_mutpb: List[float],
             stat_functions: List[Tuple[str, Callable]],
             clusterer: Clusterer,
             device: torch.device,
             number_of_stacked_states: int = 1,
+            optimum_fitness: float = None,
+            optimum_fitness_delta: float = 0.0,
     ):
         """
 
@@ -124,24 +131,36 @@ class GeneticAlgorithmEnv:
         self.actions_sel = actions_sel
         self.actions_cx = actions_cx
         self.actions_mu = actions_mu
+        self.actions_cxpb = actions_cxpb
+        self.actions_mutpb = actions_mutpb
 
         # Possible actions - all combinations of selection, crossover and mutation operators
-        self.actions = [(s_idx, c_idx, m_idx) for s_idx in range(len(self.actions_sel)) for c_idx in range(len(
+        self.actions = [(s_idx, c_idx, m_idx, cxpb_idx, mutpb_idx) for s_idx in range(len(self.actions_sel)) for c_idx
+                        in range(len(
             self.actions_cx))
                         for
                         m_idx
                         in
-                        range(len(self.actions_mu))]
+                        range(len(self.actions_mu)) for cxpb_idx in range(len(self.actions_cxpb)) for mutpb_idx in
+                        range(len(self.actions_mutpb))]
 
         # Episodic variables - these persist only during the episode
         self.current_generation = 0
         self.evals_left = self.max_evals
-        self.prev_population = None
-        self.prev_fitness = None
-        self.prev_best_fitness = None
-        self.curr_best_fitness = None
         self.population = None
         self.done: bool = False
+
+        # Early stopping conditions
+        self.optimum_fitness = optimum_fitness
+        self.optimum_fitness_delta = optimum_fitness_delta
+
+        # Population data
+        self.prev_population = None
+        self.prev_fitness = None
+        self.prev_fitness_sum = None
+        self.curr_fitness_sum = None
+        self.prev_best_fitness = None
+        self.curr_best_fitness = None
 
         # Stats
         self.stat_functions = stat_functions
@@ -151,19 +170,41 @@ class GeneticAlgorithmEnv:
         # Reset episodic variables
         self.reset()
 
+    def to_json(self):
+        return json.dumps(
+            {
+                'num_dims': self.num_dims,
+                'low_bound': self.low_bound,
+                'up_bound': self.up_bound,
+                'fitness_fn': str(self.fitness_fn),
+                'max_evals': self.max_evals,
+                'initial_population_size': self.initial_population_size,
+                'actions_sel': [str(d) for d in self.actions_sel],
+                'actions_cx': [str(d) for d in self.actions_cx],
+                'actions_mu': [str(d) for d in self.actions_mu],
+                'actions_cxpb': [str(d) for d in self.actions_cxpb],
+                'actions_mutpb': [str(d) for d in self.actions_mutpb],
+                'stat_functions': [str(f) for f in self.stat_functions],
+                'clusterer': str(self.clusterer),
+                'number_of_stacked_states': self.number_of_stacked_states,
+            }
+        )
+
     def take_action(self, action: torch.Tensor):
         """
         :param action: Tensor with a single value - index of chosen action
         :return:
         """
         self.current_state, reward, self.done, self.n_last_states = self.step(action.item())
-        return torch.tensor([reward])
+        return torch.tensor([reward], device=self.device)
 
     def register_operators(
             self,
             action_sel_idx: int,
             action_cx_idx: int,
             action_mu_idx: int,
+            action_cxpb_idx: int,
+            action_mutpb_idx: int,
     ):
         """
         Take action by choosing new variational operators
@@ -191,6 +232,8 @@ class GeneticAlgorithmEnv:
                 self.actions_mu
                 )]
             )
+        self.cxpb = self.actions_cxpb[action_cxpb_idx]
+        self.mutpb = self.actions_mutpb[action_mutpb_idx]
 
     def step(
             self,
@@ -219,6 +262,9 @@ class GeneticAlgorithmEnv:
         self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
         self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
 
+        self.prev_fitness_sum = self.curr_fitness_sum
+        self.curr_fitness_sum = np.sum(self.prev_fitness)
+
         self.prev_best_fitness = self.curr_best_fitness
         self.curr_best_fitness = np.min(self.prev_fitness)
 
@@ -234,6 +280,10 @@ class GeneticAlgorithmEnv:
 
         # Check if evolution is finished
         self.done = self.evals_left <= 0
+
+        # Check if early stopping condition is met
+        if self.optimum_fitness:
+            self.done = np.abs(self.curr_best_fitness - self.optimum_fitness) <= self.optimum_fitness_delta
 
         # Select + Crossover + Mutate
         if not self.done:
@@ -300,8 +350,8 @@ class GeneticAlgorithmEnv:
         self.population = algorithms.varAnd(
             chosen_population,
             self.toolbox,
-            cxpb=MATING_RATE,
-            mutpb=INDIVIDUAL_MUTATION_RATE
+            cxpb=self.cxpb,
+            mutpb=self.mutpb,
             )
 
         # This produced a new generation
@@ -317,7 +367,11 @@ class GeneticAlgorithmEnv:
 
         :return:
         """
-        return -np.log(self.curr_best_fitness / self.prev_best_fitness)
+        reward = 1 / np.abs(self.curr_best_fitness - (self.optimum_fitness if self.optimum_fitness else 0.0))
+        if self.done and self.evals_left > 0:
+            reward *= (1 + (self.evals_left / self.max_evals)) ** 4  # 99% Unused evals means almost 16x the normal
+            # reward
+        return reward
 
     def _setup_problem(
             self
@@ -378,6 +432,8 @@ class GeneticAlgorithmEnv:
                 a == b
                 )
             )
+        self.prev_fitness_sum = np.inf
+        self.curr_fitness_sum = np.inf
         self.prev_best_fitness = np.inf
         self.curr_best_fitness = np.inf
 
@@ -398,28 +454,27 @@ class GeneticAlgorithmEnv:
 
     def get_state(self) -> torch.Tensor:
         if self.done:
-            return torch.zeros_like(
-                torch.tensor(
-                    [0] * self.get_num_state_features()
-                    ),
-                device=self.device
+            return torch.zeros(
+                    self.get_num_state_features(),
+                    device=self.device
                 ).double()
-        else:
-            data = []
-            for i in reversed(range(self.number_of_stacked_states)):
-                for k in self.logbook.header:
-                    if k not in ('gen', 'evals'):
-                        if isinstance(self.n_last_states[i][k], np.ndarray):
-                            data += list(self.n_last_states[i][k].flatten())
-                        else:
-                            data.append(self.n_last_states[i][k])
-            # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
-            if len(data) < self.get_num_state_features():
-                data += [0] * (self.get_num_state_features() - len(data))
-            return torch.tensor(
-                data,
-                device=self.device
-                ).double()
+
+        data = []
+        for i in reversed(range(self.number_of_stacked_states)):
+            for k in self.logbook.header:
+                if k in ('gen', 'evals'):
+                    continue
+                if isinstance(self.n_last_states[i][k], np.ndarray):
+                    data += list(self.n_last_states[i][k].flatten())
+                else:
+                    data.append(self.n_last_states[i][k])
+        # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
+        if len(data) < self.get_num_state_features():
+            data += [0] * (self.get_num_state_features() - len(data))
+        return torch.nan_to_num(torch.tensor(
+            data,
+            device=self.device
+            ).double())
 
     def num_actions_available(self):
         return len(self.actions)
@@ -445,6 +500,8 @@ def main():
         actions_sel=ACTIONS_SEL,
         actions_cx=ACTIONS_CX,
         actions_mu=ACTIONS_MU,
+        actions_cxpb=ACTIONS_CXPB,
+        actions_mutpb=ACTIONS_MUTPB,
         stat_functions=STAT_FUNCTIONS,
         clusterer=CLUSTERER,
         device=curr_device,
