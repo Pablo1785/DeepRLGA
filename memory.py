@@ -15,6 +15,11 @@ class ReplayMemory:
         self.memory = []
         self.push_count = 0
 
+    def _get_latest_memory(self):
+        if len(self.memory) < self.capacity:
+            return self.memory[-1]
+        return self.memory[(self.push_count - 1) % self.capacity]
+
     def push(self, experience: Experience):
         if len(self.memory) < self.capacity:
             self.memory.append(experience)
@@ -22,7 +27,17 @@ class ReplayMemory:
             self.memory[self.push_count % self.capacity] = experience
         self.push_count += 1
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, include_latest=False):
+        """
+        Sample a random batch of transitions from memory buffer.
+
+        :param batch_size: Number of samples to draw
+        :param include_latest: Guarantee that the latest transition will be a part of the sample. This is called
+        Combined Experience Replay, as in Zhang et al https://arxiv.org/pdf/1712.01275.pdf
+        :return:
+        """
+        if include_latest:
+            return random.sample(self.memory, batch_size - 1) + [self._get_latest_memory()]
         return random.sample(self.memory, batch_size)
 
     def can_provide_sample(self, batch_size):

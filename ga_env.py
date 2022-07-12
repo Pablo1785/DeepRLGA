@@ -149,6 +149,7 @@ class GeneticAlgorithmEnv:
         self.evals_left = self.max_evals
         self.population = None
         self.done: bool = False
+        self.reached_terminal_state: bool = False
 
         # Early stopping conditions
         self.optimum_fitness = optimum_fitness
@@ -184,8 +185,8 @@ class GeneticAlgorithmEnv:
                 'actions_mu': [str(d) for d in self.actions_mu],
                 'actions_cxpb': [str(d) for d in self.actions_cxpb],
                 'actions_mutpb': [str(d) for d in self.actions_mutpb],
-                'stat_functions': [str(f) for f in self.stat_functions],
-                'clusterer': str(self.clusterer),
+                'stat_functions': [str(f) for f in self.stat_functions] if self.stat_functions else None,
+                'clusterer': str(self.clusterer) if self.clusterer else None,
                 'number_of_stacked_states': self.number_of_stacked_states,
             }
         )
@@ -273,17 +274,21 @@ class GeneticAlgorithmEnv:
         modified_record.pop('gen')
         modified_record.pop('evals')  # these numbers are too problem specific, ratio of evals left is a better proxy
         # for how much time does the network have left
-        self.current_state = modified_record
+        self.current_state = torch.tensor([[gene for gene in ind] + [ind.fitness.values[0]] for ind in
+                                           self.population],
+        device=self.device)
 
         self.n_last_states.pop(0)
         self.n_last_states.append(copy.deepcopy(self.current_state))
 
-        # Check if evolution is finished
-        self.done = self.evals_left <= 0
-
         # Check if early stopping condition is met
-        if self.optimum_fitness:
-            self.done = np.abs(self.curr_best_fitness - self.optimum_fitness) <= self.optimum_fitness_delta
+        if self.optimum_fitness is not None:
+            self.reached_terminal_state = np.abs(self.curr_best_fitness - self.optimum_fitness) <= self.optimum_fitness_delta
+            if self.reached_terminal_state:
+                print(f'Reached terminal state at {self.max_evals - self.evals_left} evals')
+
+        # Check if evolution is finished
+        self.done = self.evals_left <= 0 or self.reached_terminal_state
 
         # Select + Crossover + Mutate
         if not self.done:
@@ -301,10 +306,10 @@ class GeneticAlgorithmEnv:
             n=self.initial_population_size
             )
 
-        self.current_state = {k: 0 for k in self.logbook.header}
-        self.n_last_states: List[Dict] = [
-            {k: 0 for k in self.logbook.header} for _ in range(self.number_of_stacked_states)
-        ]
+        self.current_state: torch.Tensor = torch.zeros((len(self.population), len(self.population[0]) + 1),
+                                                       device=self.device)
+        self.n_last_states: List[torch.Tensor] = [torch.zeros((len(self.population), len(self.population[0]) + 1),
+                                                       device=self.device) for _ in range(self.number_of_stacked_states)]
 
     def log_stats(
             self
@@ -367,11 +372,9 @@ class GeneticAlgorithmEnv:
 
         :return:
         """
-        reward = 1 / np.abs(self.curr_best_fitness - (self.optimum_fitness if self.optimum_fitness else 0.0))
-        if self.done and self.evals_left > 0:
-            reward *= (1 + (self.evals_left / self.max_evals)) ** 4  # 99% Unused evals means almost 16x the normal
-            # reward
-        return reward
+        if self.reached_terminal_state:
+            return 0
+        return -1
 
     def _setup_problem(
             self
@@ -455,37 +458,20 @@ class GeneticAlgorithmEnv:
     def get_state(self) -> torch.Tensor:
         if self.done:
             return torch.zeros(
-                    self.get_num_state_features(),
-                    device=self.device
-                ).double()
-
-        data = []
-        for i in reversed(range(self.number_of_stacked_states)):
-            for k in self.logbook.header:
-                if k in ('gen', 'evals'):
-                    continue
-                if isinstance(self.n_last_states[i][k], np.ndarray):
-                    data += list(self.n_last_states[i][k].flatten())
-                else:
-                    data.append(self.n_last_states[i][k])
-        # Pad data with 0's, e.g. on the first call to get_state() before any state data was collected
-        if len(data) < self.get_num_state_features():
-            data += [0] * (self.get_num_state_features() - len(data))
-        return torch.nan_to_num(torch.tensor(
-            data,
-            device=self.device
-            ).double())
+                self.get_num_state_features(),
+                device=self.device
+            ).double()
+        return torch.nan_to_num(
+            torch.cat(
+                self.n_last_states
+            ).flatten().double()
+        )
 
     def num_actions_available(self):
         return len(self.actions)
 
     def get_num_state_features(self):
-        if not self.clusterer.fns:
-            return self.number_of_stacked_states * len(self.logbook.header)
-        return self.number_of_stacked_states * (len(self.logbook.header) - 3 + len(self.clusterer.fns) *
-                                              self.clusterer.n_clusters)  # Clusterer
-        # fns + 1 because for each cluster we also calculate its distance from the center of search space
-        # logbook.header - 2 because gens and evals are dropped, -1 because clustering data is one of the fields
+        return self.number_of_stacked_states * len(self.population) * (len(self.population[0]) + 1)
 
 
 def main():

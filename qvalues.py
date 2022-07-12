@@ -1,9 +1,11 @@
 import torch
 
+from deep_rl_ga.network import DQN
+
 
 class QValues:
     @staticmethod
-    def get_current(policy_net, states, actions):
+    def get_current(policy_net: DQN, states, actions) -> torch.Tensor:
         return policy_net(states).gather(dim=1, index=actions.unsqueeze(-1))
 
     @staticmethod
