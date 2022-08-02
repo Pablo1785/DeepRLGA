@@ -103,6 +103,7 @@ class GeneticAlgorithmEnv:
             number_of_stacked_states: int = 1,
             optimum_fitness: float = None,
             optimum_fitness_delta: float = 0.0,
+            gene_quantization_buckets: int = None,
     ):
         """
 
@@ -116,6 +117,8 @@ class GeneticAlgorithmEnv:
         :param actions_cx:
         :param actions_mu:
         :param device: Pytorch device
+        :param gene_quantization_buckets: Input gene values are quantized into integers in range(0,
+        gene_quantization_buckets)
         """
         self.device = device
 
@@ -167,9 +170,13 @@ class GeneticAlgorithmEnv:
         self.stat_functions = stat_functions
         self.clusterer = clusterer
         self.number_of_stacked_states = number_of_stacked_states
+        self.gene_quantization_buckets = gene_quantization_buckets
 
         # Reset episodic variables
         self.reset()
+
+    def _quantize_gene(self, gene_value: float) -> int:
+        return round(self.gene_quantization_buckets * (gene_value - self.low_bound) / (self.up_bound - self.low_bound))
 
     def to_json(self):
         return json.dumps(
@@ -260,7 +267,14 @@ class GeneticAlgorithmEnv:
             )
 
         # Log data
-        self.prev_population = np.array([[gene for gene in ind] for ind in self.population])
+        if self.gene_quantization_buckets is not None:
+            self.prev_population = np.array([[self._quantize_gene(gene) if self.gene_quantization_buckets is not None
+                                              else gene for gene in ind] for ind in
+                                             self.population])
+        else:
+            self.prev_population = np.array([[gene if self.gene_quantization_buckets is not None
+                                              else gene for gene in ind] for ind in
+                                             self.population])
         self.prev_fitness = np.array([ind.fitness.values[0] for ind in self.population])
 
         self.prev_fitness_sum = self.curr_fitness_sum
@@ -274,9 +288,14 @@ class GeneticAlgorithmEnv:
         modified_record.pop('gen')
         modified_record.pop('evals')  # these numbers are too problem specific, ratio of evals left is a better proxy
         # for how much time does the network have left
-        self.current_state = torch.tensor([[gene for gene in ind] + [ind.fitness.values[0]] for ind in
-                                           self.population],
-        device=self.device)
+        if self.gene_quantization_buckets is not None:
+            self.current_state = torch.tensor([[self._quantize_gene(gene) for gene in ind] + [ind.fitness.values[0]] for ind in
+                                               self.population],
+            device=self.device)
+        else:
+            self.current_state = torch.tensor([[gene for gene in ind] + [ind.fitness.values[0]] for ind in
+                                               self.population],
+            device=self.device)
 
         self.n_last_states.pop(0)
         self.n_last_states.append(copy.deepcopy(self.current_state))
@@ -372,6 +391,8 @@ class GeneticAlgorithmEnv:
 
         :return:
         """
+        # TODO: Try some form of an average over 100 last generations; in general try fuzzying the reward as much as
+        #  possible; maybe best fitness over last N generations
         if self.reached_terminal_state:
             return 0
         return -1
@@ -499,6 +520,8 @@ def main():
         st = em.get_state()
         print(f'\nSTATE: {st}')
     print(f'Best fitness: {1 / em.get_reward()}')
+    # TODO: Try running the GA N times and monitor potential reward parameters to see which ones improve with
+    #  evolution; pick a problem so the parameters improve gradually and not suddenly find a huge peak
 
 
 if __name__ == '__main__':
